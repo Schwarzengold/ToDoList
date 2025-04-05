@@ -78,8 +78,8 @@ export default function App() {
   };
 
   const toggleTask = (id) => {
-    setTodos((prev) =>
-      prev.map((task) =>
+    setTodos(prev =>
+      prev.map(task =>
         task.id === id ? { ...task, completed: !task.completed } : task
       )
     );
@@ -93,17 +93,19 @@ export default function App() {
     return format(dt, 'dd/MM/yyyy HH:mm');
   };
 
-  const filteredTasks = todos.filter((task) => {
+  const deleteCompletedTasksForSelectedDay = () => {
+    setTodos(todos.filter(task => !(isSameDay(new Date(task.dueDate), selectedDate) && task.completed)));
+  };
+
+  const filteredTasks = todos.filter(task => {
     if (!isSameDay(new Date(task.dueDate), selectedDate)) return false;
     if (filter === 'active') return !task.completed;
     if (filter === 'completed') return task.completed;
     return true;
   });
 
-  const totalTasks = todos.filter((t) => isSameDay(new Date(t.dueDate), selectedDate)).length;
-  const completedTasks = todos.filter(
-    (t) => isSameDay(new Date(t.dueDate), selectedDate) && t.completed
-  ).length;
+  const totalTasks = todos.filter(t => isSameDay(new Date(t.dueDate), selectedDate)).length;
+  const completedTasks = todos.filter(t => isSameDay(new Date(t.dueDate), selectedDate) && t.completed).length;
 
   return (
     <LinearGradient colors={['#FCE38A', '#F38181']} style={{ flex: 1 }}>
@@ -114,7 +116,7 @@ export default function App() {
         </View>
         <FlatList
           data={filteredTasks}
-          keyExtractor={(item) => item.id}
+          keyExtractor={item => item.id}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.taskCard} onPress={() => toggleTask(item.id)} activeOpacity={0.8}>
               <View style={styles.taskRow}>
@@ -130,31 +132,22 @@ export default function App() {
           <TouchableOpacity onPress={() => setIsCalendarVisible(true)} style={styles.navButton}>
             <Ionicons name="calendar" size={28} color="#FFA000" />
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => {
-              setTempFilter(filter);
-              setFilterModalVisible(true);
-            }}
-            style={styles.navButton}
-          >
+          <TouchableOpacity onPress={() => { setTempFilter(filter); setFilterModalVisible(true); }} style={styles.navButton}>
             <Feather name="filter" size={28} color="#4CAF50" />
           </TouchableOpacity>
-          <View style={styles.plusWrapper}>
-            <TouchableOpacity onPress={() => setAddModalVisible(true)} style={styles.plusButton}>
-              <Ionicons name="add" size={32} color="#fff" />
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity
-            onPress={() => {
-              setTempSound(selectedSound);
-              setNotifModalVisible(true);
-            }}
-            style={styles.navButton}
-          >
+          <TouchableOpacity onPress={deleteCompletedTasksForSelectedDay} style={styles.navButton}>
+            <Ionicons name="trash" size={28} color="#E53935" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { setTempSound(selectedSound); setNotifModalVisible(true); }} style={styles.navButton}>
             <Ionicons name="notifications" size={28} color="#FF7043" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setProfileModalVisible(true)} style={styles.navButton}>
             <Ionicons name="person" size={28} color="#9C27B0" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.plusWrapper}>
+          <TouchableOpacity onPress={() => setAddModalVisible(true)} style={styles.plusButton}>
+            <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
         </View>
         <Modal visible={addModalVisible} transparent animationType="slide">
@@ -169,13 +162,7 @@ export default function App() {
                 <TouchableOpacity onPress={addTask} style={styles.modalActionButton}>
                   <Text style={styles.modalActionText}>Add</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    setAddModalVisible(false);
-                    setNewTaskTime(null);
-                  }}
-                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
-                >
+                <TouchableOpacity onPress={() => { setAddModalVisible(false); setNewTaskTime(null); }} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
                   <Text style={styles.modalActionText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
@@ -198,10 +185,7 @@ export default function App() {
         <DateTimePickerModal
           isVisible={isCalendarVisible}
           mode="date"
-          onConfirm={(date) => {
-            setSelectedDate(date);
-            setIsCalendarVisible(false);
-          }}
+          onConfirm={(date) => { setSelectedDate(date); setIsCalendarVisible(false); }}
           onCancel={() => setIsCalendarVisible(false)}
         />
         <Modal visible={filterModalVisible} transparent animationType="fade">
@@ -218,19 +202,10 @@ export default function App() {
                 <Text style={[styles.filterOptionText, tempFilter === 'completed' && styles.filterOptionTextActive]}>Completed</Text>
               </TouchableOpacity>
               <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setFilter(tempFilter);
-                    setFilterModalVisible(false);
-                  }}
-                  style={styles.modalActionButton}
-                >
+                <TouchableOpacity onPress={() => { setFilter(tempFilter); setFilterModalVisible(false); }} style={styles.modalActionButton}>
                   <Text style={styles.modalActionText}>Apply</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setFilterModalVisible(false)}
-                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
-                >
+                <TouchableOpacity onPress={() => setFilterModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
                   <Text style={styles.modalActionText}>Close</Text>
                 </TouchableOpacity>
               </View>
@@ -241,25 +216,16 @@ export default function App() {
           <View style={styles.modalOverlay}>
             <View style={styles.filterModal}>
               <Text style={styles.modalTitle}>Select Ringtone</Text>
-              {['Chime', 'Alert', 'Melody'].map((sound) => (
+              {['Chime', 'Alert', 'Melody'].map(sound => (
                 <TouchableOpacity key={sound} onPress={() => setTempSound(sound)} style={[styles.filterOption, tempSound === sound && styles.filterOptionActive]}>
                   <Text style={[styles.filterOptionText, tempSound === sound && styles.filterOptionTextActive]}>{sound}</Text>
                 </TouchableOpacity>
               ))}
               <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setSelectedSound(tempSound);
-                    setNotifModalVisible(false);
-                  }}
-                  style={styles.modalActionButton}
-                >
+                <TouchableOpacity onPress={() => { setSelectedSound(tempSound); setNotifModalVisible(false); }} style={styles.modalActionButton}>
                   <Text style={styles.modalActionText}>Apply</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setNotifModalVisible(false)}
-                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
-                >
+                <TouchableOpacity onPress={() => setNotifModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
                   <Text style={styles.modalActionText}>Close</Text>
                 </TouchableOpacity>
               </View>
@@ -352,7 +318,8 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   plusWrapper: {
-    bottom: 80,
+    position: 'absolute',
+    bottom: 100,
     alignSelf: 'center',
     zIndex: 10,
   },
