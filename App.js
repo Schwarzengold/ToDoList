@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   FlatList,
@@ -8,10 +7,18 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Platform,
-  Alert,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Provider, useDispatch, useSelector } from 'react-redux';
+import { PersistGate } from 'redux-persist/integration/react';
+import { store, persistor } from './store';
+import {
+  addTask,
+  toggleTask,
+  removeDoneForDate,
+  selectTasks,
+  selectUnfinishedCount,
+} from './tasksSlice';
+
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -19,144 +26,106 @@ import { Calendar } from 'react-native-calendars';
 import { format, isSameDay } from 'date-fns';
 import { useForm, Controller } from 'react-hook-form';
 import { Picker } from '@react-native-picker/picker';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
-export default function App() {
-  const [todos, setTodos] = useState([]);
+export default function Root() {
+  return (
+    <Provider store={store}>
+      <PersistGate loading={null} persistor={persistor}>
+        <SafeAreaProvider>
+          <App />
+        </SafeAreaProvider>
+      </PersistGate>
+    </Provider>
+  );
+}
+
+function App() {
+  const insets = useSafeAreaInsets();
+  const tasks = useSelector(selectTasks);
+  const unfinished = useSelector(selectUnfinishedCount);
+  const dispatch = useDispatch();
+  const filterOptions = ['all', 'active', 'completed', 'low', 'medium', 'high'];
+
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [showFormDatePicker, setShowFormDatePicker] = useState(false);
   const [showFormTimePicker, setShowFormTimePicker] = useState(false);
   const [filter, setFilter] = useState('all');
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [tempFilter, setTempFilter] = useState('all');
-  const [notifModalVisible, setNotifModalVisible] = useState(false);
-  const [selectedSound, setSelectedSound] = useState('Chime');
-  const [tempSound, setTempSound] = useState('Chime');
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [calendarModalVisible, setCalendarModalVisible] = useState(false);
+  const [pendingModalVisible, setPendingModalVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  
 
   const { control, handleSubmit, reset, setValue, watch } = useForm({
-    defaultValues: {
-      title: '',
-      date: new Date(),
-      time: new Date(),
-      priority: 'low',
-    },
+    defaultValues: { title: '', date: new Date(), time: new Date(), priority: 'low' },
   });
   const formDate = watch('date');
   const formTime = watch('time');
 
-  const safeFormat = (dateValue, formatStr) => {
-    const d = new Date(dateValue);
-    return isNaN(d.getTime()) ? '' : format(d, formatStr);
+  const safeFormat = (d, fmt) => {
+    const date = new Date(d);
+    return isNaN(date) ? '' : format(date, fmt);
   };
-
-  useEffect(() => {
-    const loadTodos = async () => {
-      try {
-        const data = await AsyncStorage.getItem('todos');
-        if (data) setTodos(JSON.parse(data));
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    loadTodos();
-  }, []);
-
-  useEffect(() => {
-    const saveTodos = async () => {
-      try {
-        await AsyncStorage.setItem('todos', JSON.stringify(todos));
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    saveTodos();
-  }, [todos]);
-
-  const onSubmit = (data) => {
-    const newTask = {
-      id: Date.now().toString(),
-      text: data.title,
-      dueDate: data.date,
-      dueTime: data.time,
-      priority: data.priority,
-      status: 'to-do',
-    };
-    setTodos([...todos, newTask]);
-    reset();
-    setAddModalVisible(false);
-  };
-
-  const toggleTask = (id) => {
-    setTodos(prev =>
-      prev.map(task =>
-        task.id === id ? { ...task, status: task.status === 'to-do' ? 'done' : 'to-do' } : task
-      )
-    );
-  };
-
   const formatDue = (date, time) => {
     const d = new Date(date);
     const t = new Date(time);
-    d.setHours(t.getHours());
-    d.setMinutes(t.getMinutes());
+    d.setHours(t.getHours(), t.getMinutes());
     return safeFormat(d, 'dd/MM/yyyy HH:mm');
   };
 
-  const deleteCompletedTasksForSelectedDay = () => {
-    setTodos(todos.filter(task => !(isSameDay(new Date(task.dueDate), selectedDate) && task.status === 'done')));
+  const onSubmit = (data) => {
+    dispatch(addTask(data));
+    reset();
+    setAddModalVisible(false);
   };
+  const toggle = (id) => dispatch(toggleTask(id));
+  const deleteDoneForDay = () => dispatch(removeDoneForDate(selectedDate));
 
-  const getMarkedDates = () => {
-    const marks = {};
-    todos.forEach(task => {
-      const dateKey = safeFormat(task.dueDate, 'yyyy-MM-dd');
-      marks[dateKey] = { marked: true, dotColor: '#50cebb' };
-    });
-    const selectedKey = safeFormat(selectedDate, 'yyyy-MM-dd');
-    marks[selectedKey] = { ...(marks[selectedKey] || {}), selected: true, selectedColor: '#2196F3' };
-    return marks;
-  };
 
-  const filteredTasks = todos.filter(task => {
-    if (!isSameDay(new Date(task.dueDate), selectedDate)) return false;
-    if (filter === 'active') return task.status === 'to-do';
-    if (filter === 'completed') return task.status === 'done';
-    if (['low', 'medium', 'high'].includes(filter)) return task.priority === filter;
+  const filtered = tasks.filter((t) => {
+    if (!isSameDay(new Date(t.dueDate), selectedDate)) return false;
+    if (filter === 'active') return t.status === 'to-do';
+    if (filter === 'completed') return t.status === 'done';
+    if (['low', 'medium', 'high'].includes(filter)) return t.priority === filter;
     return true;
   });
 
-  const totalTasks = todos.filter(t => isSameDay(new Date(t.dueDate), selectedDate)).length;
-  const completedTasks = todos.filter(t => isSameDay(new Date(t.dueDate), selectedDate) && t.status === 'done').length;
+  const pendingTasks = tasks.filter((t) => t.status === 'to-do');
 
-  const filterOptions = ['all', 'active', 'completed', 'low', 'medium', 'high'];
-
-  const getPriorityStyle = (priority) => {
-    switch (priority) {
-      case 'low':
-        return { borderLeftColor: '#4CAF50', borderLeftWidth: 5 };
-      case 'medium':
-        return { borderLeftColor: '#FF9800', borderLeftWidth: 5 };
-      case 'high':
-        return { borderLeftColor: '#F44336', borderLeftWidth: 5 };
-      default:
-        return {};
-    }
+  const getMarkedDates = () => {
+    const m = {};
+    tasks.forEach((t) => {
+      const key = safeFormat(t.dueDate, 'yyyy-MM-dd');
+      m[key] = { marked: true, dotColor: '#50cebb' };
+    });
+    const sel = safeFormat(selectedDate, 'yyyy-MM-dd');
+    m[sel] = { ...(m[sel] || {}), selected: true, selectedColor: '#2196F3' };
+    return m;
   };
 
-  const getPriorityIcon = (priority) => {
-    switch (priority) {
-      case 'low':
-        return <Ionicons name="arrow-down-circle" size={20} color="#4CAF50" style={styles.priorityIcon} />;
-      case 'medium':
-        return <Ionicons name="alert-circle" size={20} color="#FF9800" style={styles.priorityIcon} />;
-      case 'high':
-        return <Ionicons name="warning" size={20} color="#F44336" style={styles.priorityIcon} />;
-      default:
-        return null;
-    }
-  };
+  const getPriorityStyle = (p) =>
+    p === 'low'
+      ? { borderLeftColor: '#4CAF50', borderLeftWidth: 5 }
+      : p === 'medium'
+      ? { borderLeftColor: '#FF9800', borderLeftWidth: 5 }
+      : p === 'high'
+      ? { borderLeftColor: '#F44336', borderLeftWidth: 5 }
+      : {};
+  const getPriorityIcon = (p) =>
+    p === 'low' ? (
+      <Ionicons name="arrow-down-circle" size={20} color="#4CAF50" style={styles.priorityIcon} />
+    ) : p === 'medium' ? (
+      <Ionicons name="alert-circle" size={20} color="#FF9800" style={styles.priorityIcon} />
+    ) : p === 'high' ? (
+      <Ionicons name="warning" size={20} color="#F44336" style={styles.priorityIcon} />
+    ) : null;
 
   return (
     <LinearGradient colors={['#FCE38A', '#F38181']} style={{ flex: 1 }}>
@@ -165,13 +134,23 @@ export default function App() {
           <Text style={styles.headerTitle}>ToDo List</Text>
           <Text style={styles.headerDate}>{safeFormat(selectedDate, 'do MMMM yyyy')}</Text>
         </View>
+
         <FlatList
-          data={filteredTasks}
-          keyExtractor={item => item.id}
+          data={filtered}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={{ paddingBottom: 120 }}
           renderItem={({ item }) => (
-            <TouchableOpacity style={[styles.taskCard, getPriorityStyle(item.priority)]} onPress={() => toggleTask(item.id)} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={[styles.taskCard, getPriorityStyle(item.priority)]}
+              onPress={() => toggle(item.id)}
+            >
               <View style={styles.taskRow}>
-                <Ionicons name={item.status === 'done' ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={item.status === 'done' ? '#4CAF50' : '#aaa'} style={styles.checkboxIcon} />
+                <Ionicons
+                  name={item.status === 'done' ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={24}
+                  color={item.status === 'done' ? '#4CAF50' : '#aaa'}
+                  style={styles.checkboxIcon}
+                />
                 <Text style={[styles.taskText, item.status === 'done' && styles.taskCompleted]}>
                   {item.text}
                 </Text>
@@ -180,42 +159,131 @@ export default function App() {
               <Text style={styles.taskTime}>{formatDue(item.dueDate, item.dueTime)}</Text>
             </TouchableOpacity>
           )}
-          contentContainerStyle={{ paddingBottom: 120 }}
         />
-        <View style={styles.bottomNav}>
+
+        <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 10 }]}>
           <TouchableOpacity onPress={() => setCalendarModalVisible(true)} style={styles.navButton}>
             <Ionicons name="calendar" size={28} color="#FFA000" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setTempFilter(filter); setFilterModalVisible(true); }} style={styles.navButton}>
+
+          <TouchableOpacity
+            onPress={() => {
+              setTempFilter(filter);
+              setFilterModalVisible(true);
+            }}
+            style={styles.navButton}
+          >
             <Feather name="filter" size={28} color="#4CAF50" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={deleteCompletedTasksForSelectedDay} style={styles.navButton}>
+
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => setPendingModalVisible(true)}
+          >
+            <Ionicons name="notifications" size={28} color="#FF7043" />
+            {unfinished > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unfinished > 99 ? '99+' : unfinished}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={deleteDoneForDay} style={styles.navButton}>
             <Ionicons name="trash" size={28} color="#E53935" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setTempSound(selectedSound); setNotifModalVisible(true); }} style={styles.navButton}>
-            <Ionicons name="notifications" size={28} color="#FF7043" />
-          </TouchableOpacity>
+
           <TouchableOpacity onPress={() => setProfileModalVisible(true)} style={styles.navButton}>
             <Ionicons name="person" size={28} color="#9C27B0" />
           </TouchableOpacity>
         </View>
+
         <View style={styles.plusWrapper}>
-          <TouchableOpacity onPress={() => { setValue('date', selectedDate); setAddModalVisible(true); }} style={styles.plusButton}>
+          <TouchableOpacity
+            style={styles.plusButton}
+            onPress={() => {
+              setValue('date', selectedDate);
+              setAddModalVisible(true);
+            }}
+          >
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
         </View>
+
+        <Modal visible={pendingModalVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.bigModal}>
+              <Text style={styles.modalTitle}>All Pending Tasks</Text>
+
+              <FlatList
+                data={pendingTasks}
+                keyExtractor={(i) => i.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.taskCard, getPriorityStyle(item.priority)]}
+                    onPress={() => toggle(item.id)}
+                  >
+                    <View style={styles.taskRow}>
+                      <Ionicons
+                        name={
+                          item.status === 'done' ? 'checkmark-circle' : 'ellipse-outline'
+                        }
+                        size={24}
+                        color={item.status === 'done' ? '#4CAF50' : '#aaa'}
+                        style={styles.checkboxIcon}
+                      />
+                      <Text
+                        style={[
+                          styles.taskText,
+                          item.status === 'done' && styles.taskCompleted,
+                        ]}
+                      >
+                        {item.text}
+                      </Text>
+                      {getPriorityIcon(item.priority)}
+                    </View>
+                    <Text style={styles.taskTime}>
+                      {formatDue(item.dueDate, item.dueTime)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={{ alignSelf: 'center', marginTop: 20, color: '#555' }}>
+                    No pending tasks 🎉
+                  </Text>
+                }
+              />
+
+              <View style={[styles.modalButtons, { marginTop: 12 }]}>
+                <TouchableOpacity
+                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
+                  onPress={() => setPendingModalVisible(false)}
+                >
+                  <Text style={styles.modalActionText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         <Modal visible={addModalVisible} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Add New Task</Text>
+
               <Controller
                 control={control}
                 name="title"
                 rules={{ required: true }}
                 render={({ field: { onChange, value } }) => (
-                  <TextInput style={styles.input} placeholder="Task title" onChangeText={onChange} value={value} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Task title"
+                    value={value}
+                    onChangeText={onChange}
+                  />
                 )}
               />
+
               <Text style={styles.label}>Priority:</Text>
               <Controller
                 control={control}
@@ -230,108 +298,152 @@ export default function App() {
                   </View>
                 )}
               />
-              <TouchableOpacity onPress={() => setShowFormDatePicker(true)} style={styles.timePickerButton}>
+
+              <TouchableOpacity
+                style={styles.timePickerButton}
+                onPress={() => setShowFormDatePicker(true)}
+              >
                 <Text style={styles.timePickerText}>{safeFormat(formDate, 'dd/MM/yyyy')}</Text>
               </TouchableOpacity>
               {showFormDatePicker && (
                 <DateTimePickerModal
-                  isVisible={showFormDatePicker}
+                  isVisible
                   mode="date"
-                  onConfirm={(date) => { setValue('date', date); setShowFormDatePicker(false); }}
+                  onConfirm={(d) => {
+                    setValue('date', d);
+                    setShowFormDatePicker(false);
+                  }}
                   onCancel={() => setShowFormDatePicker(false)}
                 />
               )}
-              <TouchableOpacity onPress={() => setShowFormTimePicker(true)} style={styles.timePickerButton}>
+
+              <TouchableOpacity
+                style={styles.timePickerButton}
+                onPress={() => setShowFormTimePicker(true)}
+              >
                 <Text style={styles.timePickerText}>{safeFormat(formTime, 'HH:mm')}</Text>
               </TouchableOpacity>
               {showFormTimePicker && (
                 <DateTimePickerModal
-                  isVisible={showFormTimePicker}
+                  isVisible
                   mode="time"
-                  onConfirm={(time) => { setValue('time', time); setShowFormTimePicker(false); }}
+                  onConfirm={(t) => {
+                    setValue('time', t);
+                    setShowFormTimePicker(false);
+                  }}
                   onCancel={() => setShowFormTimePicker(false)}
                 />
               )}
+
               <View style={styles.modalButtons}>
-                <TouchableOpacity onPress={handleSubmit(onSubmit)} style={styles.modalActionButton}>
+                <TouchableOpacity
+                  style={styles.modalActionButton}
+                  onPress={handleSubmit(onSubmit)}
+                >
                   <Text style={styles.modalActionText}>Add</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => { reset(); setAddModalVisible(false); }} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
+                <TouchableOpacity
+                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
+                  onPress={() => {
+                    reset();
+                    setAddModalVisible(false);
+                  }}
+                >
                   <Text style={styles.modalActionText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
+
         <Modal visible={calendarModalVisible} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.calendarModal}>
               <Calendar
                 current={safeFormat(selectedDate, 'yyyy-MM-dd')}
                 markedDates={getMarkedDates()}
-                onDayPress={(day) => {
-                  setSelectedDate(new Date(day.timestamp));
+                onDayPress={(d) => {
+                  setSelectedDate(new Date(d.timestamp));
                   setCalendarModalVisible(false);
                 }}
               />
               <View style={styles.modalButtons}>
-                <TouchableOpacity onPress={() => setCalendarModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
+                <TouchableOpacity
+                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
+                  onPress={() => setCalendarModalVisible(false)}
+                >
                   <Text style={styles.modalActionText}>Close</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
+
         <Modal visible={filterModalVisible} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.filterModal}>
               <Text style={styles.modalTitle}>Filter Tasks</Text>
-              {filterOptions.map(option => (
-                <TouchableOpacity key={option} onPress={() => setTempFilter(option)} style={[styles.filterOption, tempFilter === option && styles.filterOptionActive]}>
-                  <Text style={[styles.filterOptionText, tempFilter === option && styles.filterOptionTextActive]}>
-                    {option.charAt(0).toUpperCase() + option.slice(1)}
+
+              {filterOptions.map((opt) => (
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => setTempFilter(opt)}
+                  style={[
+                    styles.filterOption,
+                    tempFilter === opt && styles.filterOptionActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterOptionText,
+                      tempFilter === opt && styles.filterOptionTextActive,
+                    ]}
+                  >
+                    {opt.charAt(0).toUpperCase() + opt.slice(1)}
                   </Text>
                 </TouchableOpacity>
               ))}
+
               <View style={styles.modalButtons}>
-                <TouchableOpacity onPress={() => { setFilter(tempFilter); setFilterModalVisible(false); }} style={styles.modalActionButton}>
+                <TouchableOpacity
+                  style={styles.modalActionButton}
+                  onPress={() => {
+                    setFilter(tempFilter);
+                    setFilterModalVisible(false);
+                  }}
+                >
                   <Text style={styles.modalActionText}>Apply</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setFilterModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
+                <TouchableOpacity
+                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
+                  onPress={() => setFilterModalVisible(false)}
+                >
                   <Text style={styles.modalActionText}>Close</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
-        <Modal visible={notifModalVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.filterModal}>
-              <Text style={styles.modalTitle}>Select Ringtone</Text>
-              {['Chime', 'Alert', 'Melody'].map(sound => (
-                <TouchableOpacity key={sound} onPress={() => setTempSound(sound)} style={[styles.filterOption, tempSound === sound && styles.filterOptionActive]}>
-                  <Text style={[styles.filterOptionText, tempSound === sound && styles.filterOptionTextActive]}>{sound}</Text>
-                </TouchableOpacity>
-              ))}
-              <View style={styles.modalButtons}>
-                <TouchableOpacity onPress={() => { setSelectedSound(tempSound); setNotifModalVisible(false); }} style={styles.modalActionButton}>
-                  <Text style={styles.modalActionText}>Apply</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setNotifModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
-                  <Text style={styles.modalActionText}>Close</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
+
         <Modal visible={profileModalVisible} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.filterModal}>
               <Text style={styles.modalTitle}>Profile Stats</Text>
-              <Text style={styles.profileText}>Total Tasks Today: {totalTasks}</Text>
-              <Text style={styles.profileText}>Completed: {completedTasks}</Text>
-              <View style={[styles.modalButtons, { marginTop: 16 }]}>
-                <TouchableOpacity onPress={() => setProfileModalVisible(false)} style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}>
+              <Text style={styles.profileText}>
+                Total Tasks Today:{' '}
+                {tasks.filter((t) => isSameDay(new Date(t.dueDate), selectedDate)).length}
+              </Text>
+              <Text style={styles.profileText}>
+                Completed:{' '}
+                {tasks.filter(
+                  (t) => isSameDay(new Date(t.dueDate), selectedDate) && t.status === 'done'
+                ).length}
+              </Text>
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
+                  onPress={() => setProfileModalVisible(false)}
+                >
                   <Text style={styles.modalActionText}>Close</Text>
                 </TouchableOpacity>
               </View>
@@ -343,35 +455,11 @@ export default function App() {
   );
 }
 
-const getPriorityStyle = (priority) => {
-  switch (priority) {
-    case 'low':
-      return { borderLeftColor: '#4CAF50', borderLeftWidth: 5 };
-    case 'medium':
-      return { borderLeftColor: '#FF9800', borderLeftWidth: 5 };
-    case 'high':
-      return { borderLeftColor: '#F44336', borderLeftWidth: 5 };
-    default:
-      return {};
-  }
-};
-
 const styles = StyleSheet.create({
-  header: {
-    paddingVertical: 20,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  headerDate: {
-    fontSize: 16,
-    color: '#444',
-    marginTop: 4,
-  },
+  header: { paddingVertical: 20, alignItems: 'center' },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#333' },
+  headerDate: { fontSize: 16, color: '#444', marginTop: 4 },
+
   taskCard: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
@@ -384,28 +472,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
-  taskRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  checkboxIcon: {
-    marginRight: 12,
-  },
-  taskText: {
-    fontSize: 18,
-    color: '#333',
-    flex: 1,
-  },
-  taskCompleted: {
-    textDecorationLine: 'line-through',
-    color: '#999',
-  },
-  taskTime: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
-    textAlign: 'right',
-  },
+  taskRow: { flexDirection: 'row', alignItems: 'center' },
+  checkboxIcon: { marginRight: 12 },
+  taskText: { fontSize: 18, color: '#333', flex: 1 },
+  taskCompleted: { textDecorationLine: 'line-through', color: '#999' },
+  taskTime: { fontSize: 14, color: '#999', marginTop: 8, textAlign: 'right' },
+
   bottomNav: {
     position: 'absolute',
     bottom: 0,
@@ -415,19 +487,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingVertical: 10,
     borderTopWidth: 1,
     borderColor: '#ddd',
   },
-  navButton: {
-    padding: 10,
-  },
-  plusWrapper: {
+  navButton: { padding: 10 },
+
+  badge: {
     position: 'absolute',
-    bottom: 100,
-    alignSelf: 'center',
-    zIndex: 10,
+    top: -2,
+    right: -4,
+    backgroundColor: '#E53935',
+    minWidth: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+
+  plusWrapper: { position: 'absolute', bottom: 130, alignSelf: 'center' },
   plusButton: {
     backgroundColor: '#2196F3',
     width: 60,
@@ -441,27 +519,27 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  calendarModal: {
+  modalContent: {
     width: '85%',
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-    marginBottom: 20,
+    padding: 20,
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
-  modalContent: {
-    width: '85%',
+  bigModal: {
+    width: '90%',
+    height: '80%',
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 20,
@@ -478,11 +556,8 @@ const styles = StyleSheet.create({
     color: '#333',
     textAlign: 'center',
   },
-  label: {
-    fontSize: 16,
-    marginBottom: 4,
-    color: '#333',
-  },
+
+  label: { fontSize: 16, marginBottom: 4, color: '#333' },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -490,8 +565,14 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 12,
-    color: '#333',
   },
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  picker: { height: 50, width: '100%' },
   timePickerButton: {
     borderWidth: 1,
     borderColor: '#2196F3',
@@ -500,20 +581,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: 'center',
   },
-  timePickerText: {
-    fontSize: 16,
-    color: '#2196F3',
-  },
-  pickerWrapper: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  picker: {
-    height: 50,
-    width: '100%',
-  },
+  timePickerText: { fontSize: 16, color: '#2196F3' },
+
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -526,10 +595,18 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginHorizontal: 5,
   },
-  modalActionText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+  modalActionText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  calendarModal: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
   },
   filterModal: {
     width: '85%',
@@ -552,24 +629,10 @@ const styles = StyleSheet.create({
     borderColor: '#bbb',
     paddingHorizontal: 12,
   },
-  filterOptionActive: {
-    borderColor: '#F57C00',
-    backgroundColor: '#FFF8E1',
-  },
-  filterOptionText: {
-    fontSize: 16,
-    color: '#2196F3',
-  },
-  filterOptionTextActive: {
-    color: '#F57C00',
-    fontWeight: 'bold',
-  },
-  profileText: {
-    fontSize: 18,
-    color: '#333',
-    marginVertical: 4,
-  },
-  priorityIcon: {
-    marginLeft: 8,
-  },
+  filterOptionActive: { borderColor: '#F57C00', backgroundColor: '#FFF8E1' },
+  filterOptionText: { fontSize: 16, color: '#2196F3' },
+  filterOptionTextActive: { color: '#F57C00', fontWeight: 'bold' },
+
+  profileText: { fontSize: 18, color: '#333', marginVertical: 4 },
+  priorityIcon: { marginLeft: 8 },
 });
