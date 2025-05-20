@@ -6,15 +6,15 @@ const tasksSlice = createSlice({
   initialState: [],
   reducers: {
     addTask: {
-      prepare({ title, date, time, priority }) {
+      prepare({ title, date, time, priority, dueDate, notificationId }) {
         return {
           payload: {
             id: nanoid(),
             text: title,
-            dueDate: date,
-            dueTime: time,
+            dueDate,
             priority,
             status: 'to-do',
+            notificationId: notificationId || null,
           },
         };
       },
@@ -29,11 +29,14 @@ const tasksSlice = createSlice({
     removeTask(state, action) {
       return state.filter((t) => t.id !== action.payload);
     },
-    removeDoneForDate(state, action) {
-      const target = action.payload;
-      return state.filter(
-        (t) => !(isSameDay(new Date(t.dueDate), target) && t.status === 'done')
-      );
+    setNotificationId(state, action) {
+      const { task, notificationId } = action.payload;
+      const t = state.find((item) => item.text === task.title && item.dueDate === task.dueDate);
+      if (t) t.notificationId = notificationId;
+    },
+    removeNotificationId(state, action) {
+      const task = state.find((t) => t.id === action.payload);
+      if (task) task.notificationId = null;
     },
   },
 });
@@ -42,7 +45,8 @@ export const {
   addTask,
   toggleTask,
   removeTask,
-  removeDoneForDate,
+  setNotificationId,
+  removeNotificationId,
 } = tasksSlice.actions;
 
 export default tasksSlice.reducer;

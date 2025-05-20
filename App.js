@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +9,8 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
+  Platform,
+  AppState,
 } from 'react-native';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
@@ -15,6 +19,7 @@ import {
   addTask,
   toggleTask,
   removeDoneForDate,
+  removeTask,
   selectTasks,
   selectUnfinishedCount,
 } from './tasksSlice';
@@ -31,6 +36,15 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
+import { nanoid } from '@reduxjs/toolkit';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 export default function Root() {
   return (
@@ -61,13 +75,71 @@ function App() {
   const [calendarModalVisible, setCalendarModalVisible] = useState(false);
   const [pendingModalVisible, setPendingModalVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  
 
   const { control, handleSubmit, reset, setValue, watch } = useForm({
     defaultValues: { title: '', date: new Date(), time: new Date(), priority: 'low' },
   });
   const formDate = watch('date');
   const formTime = watch('time');
+
+  useEffect(() => {
+    (async () => {
+      if (Constants.isDevice) {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') {
+          await Notifications.requestPermissionsAsync();
+        }
+      }
+      await Notifications.setNotificationCategoryAsync('todo-actions', [
+        {
+          identifier: 'show',
+          buttonTitle: 'Show',
+          options: { opensAppToForeground: true },
+        },
+        {
+          identifier: 'delete',
+          buttonTitle: 'Delete',
+          options: { isDestructive: true },
+        },
+      ]);
+    })();
+  }, []);
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      const actionId = response.actionIdentifier;
+      const taskId = response.notification.request.content.data.taskId;
+      if (actionId === 'show') {
+      } else if (actionId === 'delete') {
+        dispatch(removeTask(taskId));
+      }
+    });
+    return () => subscription.remove();
+  }, [dispatch]);
+
+
+  const handleRemoveTask = async (task) => {
+    if (task.notificationId) {
+      try {
+        await Notifications.cancelScheduledNotificationAsync(task.notificationId);
+      } catch {}
+    }
+    dispatch(removeTask(task.id));
+  };
+
+  const handleDeleteDoneForDay = async () => {
+    const doneForDay = tasks.filter(
+      (t) => isSameDay(new Date(t.dueDate), selectedDate) && t.status === 'done'
+    );
+    for (let task of doneForDay) {
+      if (task.notificationId) {
+        try {
+          await Notifications.cancelScheduledNotificationAsync(task.notificationId);
+        } catch {}
+      }
+    }
+    dispatch(removeDoneForDate(selectedDate));
+  };
 
   const safeFormat = (d, fmt) => {
     const date = new Date(d);
@@ -80,15 +152,38 @@ function App() {
     return safeFormat(d, 'dd/MM/yyyy HH:mm');
   };
 
-  const onSubmit = (data) => {
-    dispatch(addTask(data));
+  const onSubmit = async (data) => {
+    const scheduledDate = new Date(data.date);
+    const time = new Date(data.time);
+    scheduledDate.setHours(time.getHours());
+    scheduledDate.setMinutes(time.getMinutes());
+    const id = nanoid();
+
+    let notificationId = null;
+    try {
+      notificationId = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Task Reminder",
+          body: data.title,
+          data: { taskId: id },
+          categoryIdentifier: 'todo-actions',
+        },
+        trigger: scheduledDate,
+      });
+    } catch {}
+
+    dispatch(
+      addTask({
+        ...data,
+        id,
+        notificationId,
+      })
+    );
     reset();
     setAddModalVisible(false);
   };
+
   const toggle = (id) => dispatch(toggleTask(id));
-  const deleteDoneForDay = () => dispatch(removeDoneForDate(selectedDate));
-
-
   const filtered = tasks.filter((t) => {
     if (!isSameDay(new Date(t.dueDate), selectedDate)) return false;
     if (filter === 'active') return t.status === 'to-do';
@@ -96,7 +191,6 @@ function App() {
     if (['low', 'medium', 'high'].includes(filter)) return t.priority === filter;
     return true;
   });
-
   const pendingTasks = tasks.filter((t) => t.status === 'to-do');
 
   const getMarkedDates = () => {
@@ -143,6 +237,8 @@ function App() {
             <TouchableOpacity
               style={[styles.taskCard, getPriorityStyle(item.priority)]}
               onPress={() => toggle(item.id)}
+              onLongPress={() => handleRemoveTask(item)}
+              delayLongPress={350}
             >
               <View style={styles.taskRow}>
                 <Ionicons
@@ -188,7 +284,7 @@ function App() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={deleteDoneForDay} style={styles.navButton}>
+          <TouchableOpacity onPress={handleDeleteDoneForDay} style={styles.navButton}>
             <Ionicons name="trash" size={28} color="#E53935" />
           </TouchableOpacity>
 
@@ -213,20 +309,19 @@ function App() {
           <View style={styles.modalOverlay}>
             <View style={styles.bigModal}>
               <Text style={styles.modalTitle}>All Pending Tasks</Text>
-
               <FlatList
                 data={pendingTasks}
                 keyExtractor={(i) => i.id}
-                renderItem={({ item }) => (
+                  renderItem={({ item }) => (
                   <TouchableOpacity
                     style={[styles.taskCard, getPriorityStyle(item.priority)]}
                     onPress={() => toggle(item.id)}
+                    onLongPress={() => handleRemoveTask(item)}
+                    delayLongPress={350}
                   >
                     <View style={styles.taskRow}>
                       <Ionicons
-                        name={
-                          item.status === 'done' ? 'checkmark-circle' : 'ellipse-outline'
-                        }
+                        name={item.status === 'done' ? 'checkmark-circle' : 'ellipse-outline'}
                         size={24}
                         color={item.status === 'done' ? '#4CAF50' : '#aaa'}
                         style={styles.checkboxIcon}
@@ -241,9 +336,7 @@ function App() {
                       </Text>
                       {getPriorityIcon(item.priority)}
                     </View>
-                    <Text style={styles.taskTime}>
-                      {formatDue(item.dueDate, item.dueTime)}
-                    </Text>
+                    <Text style={styles.taskTime}>{formatDue(item.dueDate, item.dueTime)}</Text>
                   </TouchableOpacity>
                 )}
                 ListEmptyComponent={
@@ -252,7 +345,6 @@ function App() {
                   </Text>
                 }
               />
-
               <View style={[styles.modalButtons, { marginTop: 12 }]}>
                 <TouchableOpacity
                   style={[styles.modalActionButton, { backgroundColor: '#E53935' }]}
@@ -269,7 +361,6 @@ function App() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Add New Task</Text>
-
               <Controller
                 control={control}
                 name="title"
@@ -283,7 +374,6 @@ function App() {
                   />
                 )}
               />
-
               <Text style={styles.label}>Priority:</Text>
               <Controller
                 control={control}
@@ -298,7 +388,6 @@ function App() {
                   </View>
                 )}
               />
-
               <TouchableOpacity
                 style={styles.timePickerButton}
                 onPress={() => setShowFormDatePicker(true)}
@@ -316,7 +405,6 @@ function App() {
                   onCancel={() => setShowFormDatePicker(false)}
                 />
               )}
-
               <TouchableOpacity
                 style={styles.timePickerButton}
                 onPress={() => setShowFormTimePicker(true)}
@@ -334,7 +422,6 @@ function App() {
                   onCancel={() => setShowFormTimePicker(false)}
                 />
               )}
-
               <View style={styles.modalButtons}>
                 <TouchableOpacity
                   style={styles.modalActionButton}
@@ -383,7 +470,6 @@ function App() {
           <View style={styles.modalOverlay}>
             <View style={styles.filterModal}>
               <Text style={styles.modalTitle}>Filter Tasks</Text>
-
               {filterOptions.map((opt) => (
                 <TouchableOpacity
                   key={opt}
@@ -403,7 +489,6 @@ function App() {
                   </Text>
                 </TouchableOpacity>
               ))}
-
               <View style={styles.modalButtons}>
                 <TouchableOpacity
                   style={styles.modalActionButton}
