@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,6 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Platform,
-  AppState,
 } from 'react-native';
 import { Provider, useDispatch, useSelector } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
@@ -23,11 +21,11 @@ import {
   selectTasks,
   selectUnfinishedCount,
 } from './tasksSlice';
-
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
+import ProgressBar from './ProgressBar';
 import { format, isSameDay } from 'date-fns';
 import { useForm, Controller } from 'react-hook-form';
 import { Picker } from '@react-native-picker/picker';
@@ -61,9 +59,16 @@ export default function Root() {
 function App() {
   const insets = useSafeAreaInsets();
   const tasks = useSelector(selectTasks);
+  
   const unfinished = useSelector(selectUnfinishedCount);
   const dispatch = useDispatch();
   const filterOptions = ['all', 'active', 'completed', 'low', 'medium', 'high'];
+
+  const total = tasks.length;
+
+  const done = tasks.filter(t => t.status === 'done').length;
+
+  const progress = total > 0 ? done / total : 0;
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [showFormDatePicker, setShowFormDatePicker] = useState(false);
@@ -91,120 +96,106 @@ function App() {
         }
       }
       await Notifications.setNotificationCategoryAsync('todo-actions', [
-        {
-          identifier: 'show',
-          buttonTitle: 'Show',
-          options: { opensAppToForeground: true },
-        },
-        {
-          identifier: 'delete',
-          buttonTitle: 'Delete',
-          options: { isDestructive: true },
-        },
+        { identifier: 'show', buttonTitle: 'Show', options: { opensAppToForeground: true } },
+        { identifier: 'delete', buttonTitle: 'Delete', options: { isDestructive: true } },
       ]);
     })();
   }, []);
 
   useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
-      const actionId = response.actionIdentifier;
-      const taskId = response.notification.request.content.data.taskId;
-      if (actionId === 'show') {
-      } else if (actionId === 'delete') {
-        dispatch(removeTask(taskId));
-      }
+    const sub = Notifications.addNotificationResponseReceivedListener(r => {
+      const id = r.notification.request.content.data.taskId;
+      if (r.actionIdentifier === 'delete') dispatch(removeTask(id));
     });
-    return () => subscription.remove();
+    return () => sub.remove();
   }, [dispatch]);
 
-
-  const handleRemoveTask = async (task) => {
-    if (task.notificationId) {
+  const handleRemoveTask = async task => {
+    if (task.notificationId)
       try {
         await Notifications.cancelScheduledNotificationAsync(task.notificationId);
       } catch {}
-    }
     dispatch(removeTask(task.id));
   };
 
   const handleDeleteDoneForDay = async () => {
-    const doneForDay = tasks.filter(
-      (t) => isSameDay(new Date(t.dueDate), selectedDate) && t.status === 'done'
+    const done = tasks.filter(
+      t => isSameDay(new Date(t.dueDate), selectedDate) && t.status === 'done'
     );
-    for (let task of doneForDay) {
-      if (task.notificationId) {
+    for (let t of done)
+      if (t.notificationId)
         try {
-          await Notifications.cancelScheduledNotificationAsync(task.notificationId);
+          await Notifications.cancelScheduledNotificationAsync(t.notificationId);
         } catch {}
-      }
-    }
     dispatch(removeDoneForDate(selectedDate));
   };
 
-  const safeFormat = (d, fmt) => {
-    const date = new Date(d);
-    return isNaN(date) ? '' : format(date, fmt);
+  const safeFormat = (d, f) => {
+    const dt = new Date(d);
+    return isNaN(dt) ? '' : format(dt, f);
   };
-  const formatDue = (date, time) => {
-    const d = new Date(date);
-    const t = new Date(time);
-    d.setHours(t.getHours(), t.getMinutes());
-    return safeFormat(d, 'dd/MM/yyyy HH:mm');
+  const formatDue = (d, t) => {
+    const dt = new Date(d);
+    const tm = new Date(t);
+    dt.setHours(tm.getHours(), tm.getMinutes());
+    return safeFormat(dt, 'dd/MM/yyyy HH:mm');
   };
 
-  const onSubmit = async (data) => {
-    const scheduledDate = new Date(data.date);
-    const time = new Date(data.time);
-    scheduledDate.setHours(time.getHours());
-    scheduledDate.setMinutes(time.getMinutes());
+  const onSubmit = async data => {
+    const scheduled = new Date(data.date);
+    const tm = new Date(data.time);
+    scheduled.setHours(tm.getHours(), tm.getMinutes());
     const id = nanoid();
-
-    let notificationId = null;
+    let notifId = null;
     try {
-      notificationId = await Notifications.scheduleNotificationAsync({
+      notifId = await Notifications.scheduleNotificationAsync({
         content: {
-          title: "Task Reminder",
+          title: 'Task Reminder',
           body: data.title,
           data: { taskId: id },
           categoryIdentifier: 'todo-actions',
         },
-        trigger: scheduledDate,
+        trigger: scheduled,
       });
     } catch {}
-
     dispatch(
       addTask({
-        ...data,
         id,
-        notificationId,
+        text: data.title,
+        dueDate: scheduled.toISOString(),
+        dueTime: scheduled.toISOString(),
+        priority: data.priority,
+        status: 'to-do',
+        notificationId: notifId,
       })
     );
     reset();
     setAddModalVisible(false);
   };
 
-  const toggle = (id) => dispatch(toggleTask(id));
-  const filtered = tasks.filter((t) => {
+  const toggle = id => dispatch(toggleTask(id));
+
+  const filtered = tasks.filter(t => {
     if (!isSameDay(new Date(t.dueDate), selectedDate)) return false;
     if (filter === 'active') return t.status === 'to-do';
     if (filter === 'completed') return t.status === 'done';
     if (['low', 'medium', 'high'].includes(filter)) return t.priority === filter;
     return true;
   });
-  const pendingTasks = tasks.filter((t) => t.status === 'to-do');
+  const pendingTasks = tasks.filter(t => t.status === 'to-do');
 
   const getMarkedDates = () => {
     const m = {};
-    tasks.forEach((t) => {
-      const key = safeFormat(t.dueDate, 'yyyy-MM-dd');
-      m[key] = { marked: true, dotColor: '#50cebb' };
+    tasks.forEach(t => {
+      const k = safeFormat(t.dueDate, 'yyyy-MM-dd');
+      m[k] = { marked: true, dotColor: '#50cebb' };
     });
     const sel = safeFormat(selectedDate, 'yyyy-MM-dd');
     m[sel] = { ...(m[sel] || {}), selected: true, selectedColor: '#2196F3' };
     return m;
   };
 
-  const getPriorityStyle = (p) =>
+  const getPriorityStyle = p =>
     p === 'low'
       ? { borderLeftColor: '#4CAF50', borderLeftWidth: 5 }
       : p === 'medium'
@@ -212,7 +203,7 @@ function App() {
       : p === 'high'
       ? { borderLeftColor: '#F44336', borderLeftWidth: 5 }
       : {};
-  const getPriorityIcon = (p) =>
+  const getPriorityIcon = p =>
     p === 'low' ? (
       <Ionicons name="arrow-down-circle" size={20} color="#4CAF50" style={styles.priorityIcon} />
     ) : p === 'medium' ? (
@@ -231,7 +222,7 @@ function App() {
 
         <FlatList
           data={filtered}
-          keyExtractor={(i) => i.id}
+          keyExtractor={i => i.id}
           contentContainerStyle={{ paddingBottom: 120 }}
           renderItem={({ item }) => (
             <TouchableOpacity
@@ -261,7 +252,6 @@ function App() {
           <TouchableOpacity onPress={() => setCalendarModalVisible(true)} style={styles.navButton}>
             <Ionicons name="calendar" size={28} color="#FFA000" />
           </TouchableOpacity>
-
           <TouchableOpacity
             onPress={() => {
               setTempFilter(filter);
@@ -271,7 +261,6 @@ function App() {
           >
             <Feather name="filter" size={28} color="#4CAF50" />
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.navButton}
             onPress={() => setPendingModalVisible(true)}
@@ -283,11 +272,9 @@ function App() {
               </View>
             )}
           </TouchableOpacity>
-
           <TouchableOpacity onPress={handleDeleteDoneForDay} style={styles.navButton}>
             <Ionicons name="trash" size={28} color="#E53935" />
           </TouchableOpacity>
-
           <TouchableOpacity onPress={() => setProfileModalVisible(true)} style={styles.navButton}>
             <Ionicons name="person" size={28} color="#9C27B0" />
           </TouchableOpacity>
@@ -304,6 +291,11 @@ function App() {
             <Ionicons name="add" size={32} color="#fff" />
           </TouchableOpacity>
         </View>
+
+
+        {total > 0 && (
+          <ProgressBar progress={progress} />
+        )}
 
         <Modal visible={pendingModalVisible} transparent animationType="slide">
           <View style={styles.modalOverlay}>
@@ -544,7 +536,6 @@ const styles = StyleSheet.create({
   header: { paddingVertical: 20, alignItems: 'center' },
   headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#333' },
   headerDate: { fontSize: 16, color: '#444', marginTop: 4 },
-
   taskCard: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
@@ -562,7 +553,6 @@ const styles = StyleSheet.create({
   taskText: { fontSize: 18, color: '#333', flex: 1 },
   taskCompleted: { textDecorationLine: 'line-through', color: '#999' },
   taskTime: { fontSize: 14, color: '#999', marginTop: 8, textAlign: 'right' },
-
   bottomNav: {
     position: 'absolute',
     bottom: 0,
@@ -576,7 +566,6 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
   },
   navButton: { padding: 10 },
-
   badge: {
     position: 'absolute',
     top: -2,
@@ -589,7 +578,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
-
   plusWrapper: { position: 'absolute', bottom: 130, alignSelf: 'center' },
   plusButton: {
     backgroundColor: '#2196F3',
@@ -604,7 +592,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.3)',
